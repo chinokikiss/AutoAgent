@@ -1,0 +1,13 @@
+fastapi
+pydantic
+uvicorn
+requests
+Pillow
+pyperclip
+pyautogui
+toml
+openai
+pyfiglet
+beautifulsoup4
+playwright
+winotify
