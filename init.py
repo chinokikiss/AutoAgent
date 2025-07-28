@@ -6,6 +6,9 @@ with open('config.toml', 'r', encoding='utf-8-sig') as f:
     config_text = f.read()
 config = toml.loads(config_text)
 
+if not config['api_key']:
+    raise Exception("请填写 config.toml 的 api_key 字段")
+
 class Config:
     WORKDIR = os.path.dirname(__file__)
 
