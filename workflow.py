@@ -196,7 +196,7 @@ class Flowchart:
             for node_id, node_label in square_nodes:
                 nodes[node_id] = node_label
             
-            curly_nodes = re.findall(r'([A-Z]+)\{([^}]+)\}', line)
+            curly_nodes = re.findall(r'([A-Z]+)\{(.+)\}', line)
             for node_id, node_label in curly_nodes:
                 nodes[node_id] = node_label
             
