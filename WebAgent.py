@@ -586,14 +586,14 @@ def get_search(query, search_type='网页'):
     return search_results
 
 def get_webpage_content(task_content, urls):
-    proxy_strings = get_proxies('http', len(urls))
-    proxies_pool = [{'http': f'http://{p}'} for p in proxy_strings]
+    # proxy_strings = get_proxies('http', len(urls))
+    # proxies_pool = [{'http': f'http://{p}'} for p in proxy_strings]
     
     results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for x,url in enumerate(urls):
-            futures.append(executor.submit(get_url_content, url, proxies_pool[x]))
+            futures.append(executor.submit(get_url_content, url)) # futures.append(executor.submit(get_url_content, url, proxies_pool[x]))
         
         for future in as_completed(futures):
             results.append(future.result())
