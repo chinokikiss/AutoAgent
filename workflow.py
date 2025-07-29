@@ -19,6 +19,8 @@ class Flowchart:
         self.connections = [['0', 'A']] + self.connections
         self.t = {}
         self.results = {}
+        self.t_lock = threading.Lock()
+        self.results_lock = threading.Lock()
         self.traversal(['0', 'A'])
     
     def begin(self, node):
@@ -54,7 +56,7 @@ class Flowchart:
                 lst.append(connection)
         return lst
     
-    def back_traversal(self, connection, has_nodes=[]):
+    def back_traversal(self, connection, has_nodes):
         if connection[0] not in has_nodes:
             has_nodes.append(connection[0])
             for i in self.end(connection[0]):
@@ -68,7 +70,7 @@ class Flowchart:
         end_connections = self.end(connection[0])
         if len(end_connections) > 1:
             while True:
-                back_nodes = self.back_traversal(connection)
+                back_nodes = self.back_traversal(connection, [])
                 t = self.t.copy()
                 del t[current_thread.ident]
                 for i in t.values():
@@ -77,10 +79,6 @@ class Flowchart:
                 else:
                     break
                 time.sleep(0.1)
-        
-        if connection[0] in self.results and self.results[connection[0]]:
-            print(self.mermaid_text)
-            print('并行模块出现问题！')
         
         result = ''
         for i in end_connections:
@@ -93,14 +91,16 @@ class Flowchart:
                 if len(i) == 3:
                     branch.append(i)
 
-        if branch:
-            self.results[connection[0]] = result
-        else:
-            self.results[connection[0]] = self.function_node(connection[0], result)
+        with self.results_lock:
+            if branch:
+                self.results[connection[0]] = result
+            else:
+                self.results[connection[0]] = self.function_node(connection[0], result)
 
 
         if connection[-1] in self.t.values():
-            del self.t[current_thread.ident]
+            with self.t_lock:
+                del self.t[current_thread.ident]
         else:
             begin_connections = self.begin(connection[-1])
             for connection in begin_connections[1:]:
@@ -108,7 +108,8 @@ class Flowchart:
             if begin_connections:
                 self.traversal(begin_connections[0])
             else:
-                del self.t[current_thread.ident]
+                with self.t_lock:
+                    del self.t[current_thread.ident]
                 if len(self.t) == 0:
                     if Config.wait:
                         console = Console()
