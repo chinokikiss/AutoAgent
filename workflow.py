@@ -19,8 +19,6 @@ class Flowchart:
         self.connections = [['0', 'A']] + self.connections
         self.t = {}
         self.results = {}
-        self.t_lock = threading.Lock()
-        self.results_lock = threading.Lock()
         self.traversal(['0', 'A'])
     
     def begin(self, node):
@@ -91,16 +89,14 @@ class Flowchart:
                 if len(i) == 3:
                     branch.append(i)
 
-        with self.results_lock:
-            if branch:
-                self.results[connection[0]] = result
-            else:
-                self.results[connection[0]] = self.function_node(connection[0], result)
+        if branch:
+            self.results[connection[0]] = result
+        else:
+            self.results[connection[0]] = self.function_node(connection[0], result)
 
 
         if connection[-1] in self.t.values():
-            with self.t_lock:
-                del self.t[current_thread.ident]
+            del self.t[current_thread.ident]
         else:
             begin_connections = self.begin(connection[-1])
             for connection in begin_connections[1:]:
@@ -108,8 +104,7 @@ class Flowchart:
             if begin_connections:
                 self.traversal(begin_connections[0])
             else:
-                with self.t_lock:
-                    del self.t[current_thread.ident]
+                del self.t[current_thread.ident]
                 if len(self.t) == 0:
                     if Config.wait:
                         console = Console()
