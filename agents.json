@@ -40,5 +40,19 @@
             },
             "required": ["task_content"]
         }
+    },
+    {
+        "name": "Text_Agent", 
+        "description": "智能文本处理助手，擅长文本分析、内容创作和知识整理。主要功能：文本总结与分析、逻辑推理与决策判断、写作与翻译、信息整理与归纳。适用于决策判断、内容创作、数据分析等文本工作场景。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_content": {
+                    "type": "string",
+                    "description": "任务内容和agent应该返回什么结果(禁止出现\\n换行符)"
+                }
+            },
+            "required": ["task_content"]
+        }
     }
 ]

@@ -11,6 +11,16 @@ from init import Config
 from datetime import datetime
 from workflow import Flowchart
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.columns import Columns
+from rich.padding import Padding
+from rich.syntax import Syntax
+from rich.align import Align
+
+console = Console()
+
 threading.Thread(target=api.main).start()
 
 print(pyfiglet.figlet_format("AutoAgent", font="big"))
@@ -41,12 +51,10 @@ SYSTEM_PROMPT = """
 
 工作流编写规范：
 - 使用 flowchart TD 格式
+- 节点名必须是单个字母
 - 头节点必须是 A[工作流取名]
 - 结束节点格式：必须是 节点名[结束]
-- 其他节点可以使用以下两种格式：
-    1. 纯文字描述：如 B[搜索相关信息]、C{检查结果是否成功?}
-    2. agent调用格式：agent_name{'task_content':'任务内容和agent应该返回什么结果(禁止出现\\n换行符)'}
-- 支持条件分支、并行处理
+- 其他节点(包括分支节点、功能节点)必须使用agent调用格式：agent_name{"task_content":"任务内容和agent应该返回什么结果"}
 
 工作流设计原则：
 - 正常情况下工作流尽量设计的简短一些，类似的步骤可以合并在一起，提倡高效
@@ -59,13 +67,13 @@ SYSTEM_PROMPT = """
 工作流示例：
 ```mermaid
 flowchart TD
-A[混合信息收集] --> B[Web_Agent{'task_content':'搜索相关资料和最新信息'}]
-A --> C[CLI_Agent{'task_content':'检查本地文件和资源'}]
-B --> D{搜索结果满足需求?}
-D -->|是| E[合并搜索结果]
-D -->|否| F[Web_Agent{'task_content':'使用不同关键词重新搜索'}]
-C --> G[CLI_Agent{'task_content':'执行系统命令和环境检查'}]
-E --> H[处理和整理信息]
+A[混合信息收集] --> B[Web_Agent{"task_content":"搜索相关资料和最新信息"}]
+A --> C[CLI_Agent{"task_content":"检查本地文件和资源"}]
+B --> D{Text_Agent{"task_content":"搜索结果满足需求?"}}
+D -->|是| E[Text_Agent{"task_content":"合并搜索结果"}]
+D -->|否| F[Web_Agent{"task_content":"使用不同关键词重新搜索"}]
+C --> G[CLI_Agent{"task_content":"执行系统命令和环境检查"}]
+E --> H[Text_Agent{"task_content":"处理和整理信息"}]
 F --> H
 G --> H
 H --> I[结束]
@@ -115,36 +123,59 @@ tools = [
     }
 ]
 
+first_message = """我是AutoAgent，一个专业的多智能体工作流编排助手。我的核心职责是通过设计和执行工作流来协调多个专业AI智能体（CLI_Agent、GUI_Agent、Web_Agent、Text_Agent），帮助用户完成复杂任务。
+
+**我的工作方式：**
+  **分析需求**：理解您的任务目标，拆解为可执行的步骤
+  **设计工作流**：用Mermaid语法编排智能体协作流程
+  **可视化确认**：生成流程图供您预览
+  **执行监控**：按确认后的工作流调用对应智能体
+
+需要执行具体任务时，请告诉我需求，我将为您生成完整的工作流方案！"""
+
+def append_tool_msg(message):
+    global messages
+
+    tool_call_id = f"call_{int(time.time()*1000)}"
+    messages.append({
+        'role': 'assistant', 
+        'content': '', 
+        'tool_calls': [
+            {
+                'id': tool_call_id,
+                'type': 'function',
+                'function': {
+                    'name': 'workflow_executor',
+                    'arguments': ''
+                }
+            }
+        ]
+    })
+    messages.append({
+        'role': 'tool',
+        'content': f"执行完毕: workflow - {message}",
+        'tool_call_id': tool_call_id
+    })
+
 workflow_demo = None
 Config.messages = Queue()
 Config.Agent_return = {}
+Config.wait = True
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-print("AutoAgent: 你好，我是AutoAgent，请问有什么可以帮助你的？")
+console.print(Panel(Text(first_message, style="bold blue"), title="AutoAgent", border_style="blue"))
 while True:
-    user_content = input("\n回复: ")
+    while not Config.messages.empty():
+        name, message = Config.messages.get()
+        append_tool_msg(message)
+        console.print(f"\n[green]▶[/green] 工作流 [bold]{name}[/bold] [bright_green]✓ 完成[/bright_green]\n")
+    
+    Config.wait = True
+    user_content = console.input("[bold yellow]\nUser: [/bold yellow]")
+    Config.wait = False
     
     while not Config.messages.empty():
-        message = Config.messages.get()
-        tool_call_id = f"call_{int(time.time()*1000)}"
-        messages.append({
-            'role': 'assistant', 
-            'content': '', 
-            'tool_calls': [
-                {
-                    'id': tool_call_id,
-                    'type': 'function',
-                    'function': {
-                        'name': 'workflow_executor',
-                        'arguments': ''
-                    }
-                }
-            ]
-        })
-        messages.append({
-            'role': 'tool',
-            'content': f"执行完毕: workflow - {message}",
-            'tool_call_id': tool_call_id
-        })
+        name, message = Config.messages.get()
+        append_tool_msg(message)
 
     if user_content.lower() == 'exit':
         os._exit(0)
@@ -153,13 +184,13 @@ while True:
         dir_name = user_content[3:]
         if os.path.isdir(dir_name):
             Config.WORKDIR = dir_name
-            print(f"[*]已切换到目录: {dir_name}")
+            console.print(Panel(Align.center(Text(f"已切换到目录: '{dir_name}'", style="bold green")), title="Success", title_align="left", border_style="green", padding=(0, 1)))
         else:
-            print(f"[!]目录 '{dir_name}' 不存在")
+            console.print(Panel(Align.center(Text(f"目录 '{dir_name}' 不存在", style="bold red")), title="Failure", title_align="left", border_style="red", padding=(0, 1)))
     
     elif user_content.lower()[:5] == 'clear':
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        print("[*]已清空上下文，可以无视之前的对话")
+        console.print(Panel(Align.center(Text(f"已清空上下文，可以无视之前的对话", style="bold green")), title="Success", title_align="left", border_style="green", padding=(0, 1)))
     
     elif user_content.lower()[:3] == 'run':
         if workflow_demo:
@@ -185,9 +216,9 @@ while True:
                 'content': f"执行成功: workflow_executor - 正在工作中...",
                 'tool_call_id': tool_call_id
             })
-            print(f"[*]已成功运行工作流 {workflow_name}，正在工作中...")
+            console.print(Panel(Align.center(Text(f"已成功运行工作流 '{workflow_name}'，正在工作中...", style="bold green")), title="Success", title_align="left", border_style="green", padding=(0, 1)))
         else:
-            print("[!]请先让AutoAgent生成示例工作流")
+            console.print(Panel(Align.center(Text(f"请先让AutoAgent生成示例工作流", style="bold red")), title="Failure", title_align="left", border_style="red", padding=(0, 1)))
 
     else:
         messages.append({"role": "user", "content": user_content})
@@ -199,42 +230,81 @@ while True:
             tools=tools
         )
 
-        print("\nAutoAgent: ", end='', flush=True)
-        reasoning = True
-        assistant_message = {'role': 'assistant', 'content': ''}
-        for chunk in response:
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    if reasoning:
-                        reasoning = False
-                        print('\n---Answer---')
-                    print(delta.content, end='', flush=True)
-                if delta.reasoning_content:
-                    print(delta.reasoning_content, end='', flush=True)
-                if delta.tool_calls:
-                    if 'tool_calls' not in assistant_message:
-                        assistant_message['tool_calls'] = []
-                    for tool_call in delta.tool_calls:
-                        if len(assistant_message['tool_calls']) <= tool_call.index:
-                            assistant_message['tool_calls'].append({
-                                'id': tool_call.id,
-                                'type': 'function',
-                                'function': {
-                                    'name': tool_call.function.name,
-                                    'arguments': tool_call.function.arguments or ''
-                                }
-                            })
-                        else:
-                            assistant_message['tool_calls'][tool_call.index]['function']['arguments'] += tool_call.function.arguments or ''
-        print()
+        with console.status("[bold blue]🤔 thinking...[/bold blue]", spinner="dots"):
+            assistant_message = {'role': 'assistant', 'content': ''}
+            response_content = ""
+            reasoning = True
+            
+            for chunk in response:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+
+                    if delta.reasoning_content:
+                        continue
+                    
+                    if delta.content:
+                        response_content += delta.content
+                        assistant_message['content'] += delta.content
+                    
+                    if delta.tool_calls:
+                        if 'tool_calls' not in assistant_message:
+                            assistant_message['tool_calls'] = []
+                        for tool_call in delta.tool_calls:
+                            while len(assistant_message['tool_calls']) <= tool_call.index:
+                                assistant_message['tool_calls'].append({})
+                            
+                            if tool_call.id:
+                                assistant_message['tool_calls'][tool_call.index]['id'] = tool_call.id
+                            if tool_call.type:
+                                assistant_message['tool_calls'][tool_call.index]['type'] = tool_call.type
+                            if 'function' not in assistant_message['tool_calls'][tool_call.index]:
+                                assistant_message['tool_calls'][tool_call.index]['function'] = {'name': '', 'arguments': ''}
+                            if tool_call.function.name:
+                                assistant_message['tool_calls'][tool_call.index]['function']['name'] = tool_call.function.name
+                            if tool_call.function.arguments is not None:
+                                assistant_message['tool_calls'][tool_call.index]['function']['arguments'] += tool_call.function.arguments or ''
+
+        console.print("\n[bold green]AutoAgent:[/bold green]")
+        if response_content:
+            console.print(Panel(Text(response_content, style="cyan"), title="Response", border_style="blue"))
+    
         messages.append(assistant_message)
 
         if assistant_message.get('tool_calls'):
             for tool_call in assistant_message['tool_calls']:
-                print(tool_call)
                 try:
                     function_name = tool_call['function']['name']
+                    arguments_str = tool_call['function']['arguments']
+            
+                    try:
+                        pretty_args = json.dumps(json.loads(arguments_str), indent=2, ensure_ascii=False)
+                        syntax = Syntax(
+                            pretty_args, 
+                            "json", 
+                            theme="monokai", 
+                            line_numbers=False, 
+                            word_wrap=True,
+                            tab_size=2
+                        )
+                    except json.JSONDecodeError:
+                        syntax = Text(arguments_str, style="italic yellow")
+                        syntax.overflow = "fold"
+
+                    terminal_width = console.size.width
+                    panel_width = min(120, terminal_width - 4)
+
+                    console.print(
+                        Panel(
+                            Columns([
+                                Text.from_markup(f"Function: [bold green]{function_name}[/bold green]"),
+                                Padding(syntax, (0, 0, 0, 4))
+                            ]),
+                            title=f"Tool Call ID: {tool_call.get('id', 'N/A')}",
+                            border_style="yellow",
+                            width=panel_width,
+                            expand=False
+                        )
+                    )
                     
                     if tool_call['function']['arguments']:
                         args = json.loads(tool_call['function']['arguments'])
@@ -254,7 +324,8 @@ while True:
                             'content': f"执行成功: {function_name} - 正在工作中...",
                             'tool_call_id': tool_call['id']
                         })
-                        print(f"[*]已成功运行工作流 {workflow_name}，正在工作中...")
+                        
+                        console.print(Panel(Align.center(Text(f"已成功运行工作流 '{workflow_name}'，正在工作中...", style="bold green")), title="Success", title_align="left", border_style="green", padding=(0, 1)))
                     elif function_name == "workflow_demo":
                         workflow_demo = args['mermaid_code']
                         try:
@@ -262,15 +333,24 @@ while True:
                         except:
                             workflow_name = ''
 
-                        demo_code = re.sub(r"(\w+_Agent)\{'task_content':'([^']+)'\}", r'\2', args['mermaid_code'])
-                        demo_code = re.sub(r'\[([^[\]]*)\(([^)]*)\)([^[\]]*)\]', r'[\1\2\3]', demo_code)
-                        demo_code = demo_code.replace('```mermaid', '').replace('```', '')
-                        demo_code = re.sub(r'["\'“”‘’:：]', '', demo_code)
+                        def process_mermaid(txt):
+                            txt = txt.strip('`').lstrip('mermaid').strip()
+                            pattern = re.compile(r'([A-Z])([\[\{])([^\]}\n]*?){"task_content":"([^"]+)"}[\]}]')
+                            def repl(m):
+                                nid, bracket, agent, task = m.groups()
+                                return f'{nid}{bracket}{nid} {agent} {task}{"]" if bracket == "[" else "}"}'
+                            txt = pattern.sub(repl, txt)
+                            txt = re.sub(r'\[([^[\]]*)\(([^)]*)\)([^[\]]*)\]', r'[\1\2\3]', txt)
+                            txt = re.sub(r'["\'“”‘’:：]', '', txt)
+
+                            return txt
+                        
+                        demo_code = process_mermaid(args['mermaid_code'])
                         with open("mermaid.mmd", "w", encoding="utf-8") as f:
                             f.write(demo_code)
                         os.system("mmdc -i mermaid.mmd -o mermaid.png -s 1")
                         img = Image.open('mermaid.png')
-                        img.show() 
+                        img.show()
 
                         messages.append({
                             'role': 'tool',
@@ -282,12 +362,10 @@ while True:
                     
                 except Exception as e:
                     error_message = f"执行失败: {str(e)}"
-                    print(f"执行工具: {function_name} - 失败: {str(e)}")
+                    console.print(Panel(Align.center(Text(f"执行工具: {function_name} - 失败: {str(e)}", style="bold red")), title="Failure", title_align="left", border_style="red", padding=(0, 1)))
 
                     messages.append({
                         'role': 'tool',
                         'content': error_message,
                         'tool_call_id': tool_call['id']
                     })
-                
-        

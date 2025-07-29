@@ -11,3 +11,4 @@ pyfiglet
 beautifulsoup4
 playwright
 winotify
+rich
