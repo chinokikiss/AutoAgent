@@ -8,9 +8,10 @@ config = toml.loads(config_text)
 
 if not config['api_key']:
     raise Exception("请填写 config.toml 的 api_key 字段")
+os.makedirs('work', exist_ok=True)
 
 class Config:
-    WORKDIR = os.path.dirname(__file__)
+    WORKDIR = os.path.dirname(__file__)+'\work'
 
     client = OpenAI(
         api_key=config['api_key'],

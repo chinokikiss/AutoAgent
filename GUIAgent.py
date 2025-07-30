@@ -8,7 +8,11 @@ import pyperclip
 import pyautogui
 from init import Config
 from extra_tool import VLM
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
 
+console = Console()
 scale = pyautogui.size().width/1261
 pyautogui.PAUSE = 0.5
 pyautogui.FAILSAFE = True
@@ -293,7 +297,7 @@ SYSTEM_PROMPT = """
 1. 先分析屏幕内容，仔细思考你接下来要进行什么操作
 2. 执行鼠标和键盘操作
 
-当你根据屏幕内容判断出用户的任务已经完成时，请在回答中包含工作报告和[任务完成]标记。
+当你根据屏幕内容判断出用户的任务已经完成时，请输出 [任务完成] 标记。
 
 行为规范：
 - 如果屏幕没有返回什么有效信息，也不要放弃，可以尝试一些快捷键（如win键）
@@ -314,9 +318,9 @@ class Agent:
     def identify(self):
         screen_result = capture_screen()
         if len(self.messages) > 2:
-            text = f"任务:'{self.task_content}'，上下文:'{self.messages[-2:]}'，"+"先根据图像分析你是否成功完成上一个操作，最后检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{“bbox_2d”: [x1, y1, x2, y2], “label”: 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象"
+            text = f"任务:'{self.task_content}'，上下文:'{self.messages[-2:]}'，"+'先根据图像分析你是否成功完成上一个操作，最后检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象'
         else:
-            text = f"任务:'{self.task_content}'，"+"检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{“bbox_2d”: [x1, y1, x2, y2], “label”: 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象"
+            text = f"任务:'{self.task_content}'，"+'检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象'
         messages2 = [{
             'role': 'user',
             'content': [
@@ -339,12 +343,13 @@ class Agent:
             stream=True
         )
 
-        print('\nQwen2.5-VL:')
+        console.print("\n[bold magenta]Qwen2.5-VL Response:[/bold magenta]")
         res = ''
         for chunk in response:
             if chunk.choices[0].delta.content:
                 res += chunk.choices[0].delta.content
-                print(chunk.choices[0].delta.content, end='', flush=True)
+                console.print(chunk.choices[0].delta.content, end='')
+        console.print()
 
         return res
     
@@ -359,19 +364,28 @@ class Agent:
                 model='Qwen/Qwen3-235B-A22B-Thinking-2507',
                 messages=self.messages,
                 stream=True,
-                tools=tools
+                tools=tools,
+                temperature=0.6,
+                top_p=0.95
             )
 
-            print('\nQwen3:')
+            console.print("\n[bold blue]Agent Response:[/bold blue]")
             content = ''
             assistant_message = {'role': 'assistant', 'content': ''}
+            reasoning = True
+            
             for chunk in response:
                 delta = chunk.choices[0].delta
                 if delta.reasoning_content:
-                    print(delta.reasoning_content, end='', flush=True)
+                    if reasoning:
+                        console.print(delta.reasoning_content, end='', style="dim")
+                    else:
+                        console.print(delta.reasoning_content, end='')
                     assistant_message['content'] += delta.reasoning_content
                 if delta.content:
-                    print(delta.content, end='', flush=True)
+                    if reasoning:
+                        reasoning = False
+                    console.print(delta.content, end='')
                     content += delta.content
                 if delta.tool_calls:
                     if 'tool_calls' not in assistant_message:
@@ -389,12 +403,11 @@ class Agent:
                         else:
                             assistant_message['tool_calls'][tool_call.index]['function']['arguments'] += tool_call.function.arguments or ''
             
-            print()
+            console.print()
             self.messages.append(assistant_message)
 
             if assistant_message.get('tool_calls'):
                 for tool_call in assistant_message['tool_calls']:
-                    print(tool_call)
                     try:
                         function_name = tool_call['function']['name']
                         
@@ -402,6 +415,9 @@ class Agent:
                             args = json.loads(tool_call['function']['arguments'])
                         else:
                             args = {}
+                        
+                        console.print(f"\n[bold cyan]Executing Tool:[/bold cyan] {function_name}")
+                        console.print(Panel(json.dumps(args, indent=2, ensure_ascii=False), border_style="cyan"))
                         
                         if function_name == 'hotkey':
                             keys = args.pop('keys', [])
@@ -411,7 +427,7 @@ class Agent:
                         else:
                             result = globals()[function_name](**args)
                         
-                        print(f"执行工具: {function_name} - 成功")
+                        console.print(f"[bold green]Tool Result:[/bold green] {result}")
 
                         self.messages.append({
                             'role': 'tool',
@@ -421,7 +437,7 @@ class Agent:
                         
                     except Exception as e:
                         error_message = f"执行失败: {str(e)}"
-                        print(f"执行工具: {function_name} - 失败: {str(e)}")
+                        console.print(f"[bold red]Tool Error:[/bold red] {function_name} - {str(e)}")
 
                         self.messages.append({
                             'role': 'tool',
@@ -430,14 +446,39 @@ class Agent:
                         })
             
             if '[任务完成]' in content:
+                console.print("\n[bold green]Task Completed[/bold green]")
                 break
             
             if not assistant_message.get('tool_calls'):
-                user_input = input('\n回复:')
+                user_input = console.input('\n[bold yellow]Reply:[/bold yellow] ')
                 self.messages.append({'role':'user', 'content':user_input})
         
+        self.messages.append({'role':'user', 'content':'根据你的任务，并考虑下一个节点的任务，详细地给出信息传递到下一个节点'})
+
+        response = Config.client.chat.completions.create(
+            model = 'Qwen/Qwen3-235B-A22B-Thinking-2507',
+            messages=self.messages,
+            stream=True,
+            temperature=0.6,
+            top_p=0.95
+        )
+
+        content = ''
+        reasoning = True
+        for chunk in response:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    if reasoning:
+                        reasoning = False
+                        console.print('\n[bold blue]---Work Report---[/bold blue]')
+                    console.print(delta.content, end='')
+                    content += delta.content
+                elif delta.reasoning_content:
+                    console.print(delta.reasoning_content, end='', style="dim")
+
         try:
-            response = requests.post(f'http://127.0.0.1:{Config.port}/return', json={"function_name":"GUI_Agent", "function_id":agent_id, "result":content})
+            response = requests.post(f'https://127.0.0.1:{Config.port}/return', json={"function_name":"GUI_Agent", "function_id":agent_id, "result":content})
             if response.status_code != 200:
                 raise response.content
         except:
@@ -593,8 +634,9 @@ if sys.argv:
     agent_id = data["agent_id"]
     os.unlink(sys.argv[1])
 
-    print('---Agent任务---')
-    print(task_content)
-    print('-'*15)
+    console.print(f"[bold blue]GUIAgent Starting[/bold blue]")
+    console.print(f"Task: {task_content}")
+    console.print("-" * 50)
+    
     agent = Agent()
     agent.request(task_content)

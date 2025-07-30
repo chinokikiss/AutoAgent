@@ -20,7 +20,7 @@ def VLM(text, imgs, is_path=True):
                 img.close()
     else:
         for file in imgs:
-            messages[0]['content'].append({'type': 'image_url', 'image_url': {'url': f"data:image/png;base64,{file}"}})
+            messages[0]['content'].append({'type': 'image_url', 'image_url': {'url': f"data:image/png;base64,{file}"}, 'max_pixels': 50176})
     
     messages[0]['content'].append({'type': 'text', 'text': text})
 

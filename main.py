@@ -43,8 +43,7 @@ SYSTEM_PROMPT = """
 你的核心能力：
 1. 分析用户需求，设计合理的工作流程
 2. 使用Mermaid flowchart语法编写工作流代码
-3. 支持串行、并行和条件判断的复杂流程控制
-4. 先展示工作流程图供用户确认，确认后执行工作流
+3. 先展示工作流程图供用户确认，确认后执行工作流
 
 你可以使用的智能体：
 %s
@@ -55,6 +54,7 @@ SYSTEM_PROMPT = """
 - 头节点必须是 A[工作流取名]
 - 结束节点格式：必须是 节点名[结束]
 - 其他节点(包括分支节点、功能节点)必须使用agent调用格式：agent_name{"task_content":"任务内容和agent应该返回什么结果"}
+- 支持串行、并行和条件判断的复杂流程控制
 
 工作流设计原则：
 - 正常情况下工作流尽量设计的简短一些，类似的步骤可以合并在一起，提倡高效
@@ -227,7 +227,9 @@ while True:
             model = 'Qwen/Qwen3-235B-A22B-Thinking-2507',
             messages=messages,
             stream=True,
-            tools=tools
+            tools=tools,
+            temperature=0.6,
+            top_p=0.95
         )
 
         with console.status("[bold blue]🤔 thinking...[/bold blue]", spinner="dots"):
@@ -335,13 +337,18 @@ while True:
 
                         def process_mermaid(txt):
                             txt = txt.strip('`').lstrip('mermaid').strip()
-                            pattern = re.compile(r'([A-Z])([\[\{])([^\]}\n]*?){"task_content":"([^"]+)"}[\]}]')
+                            pattern = re.compile(r'([A-Z]\d*)([\[\{])([A-Za-z_]+)\{"task_content":"([^"]+)"\}([\]\}])')
+
                             def repl(m):
-                                nid, bracket, agent, task = m.groups()
-                                return f'{nid}{bracket}{nid} {agent} {task}{"]" if bracket == "[" else "}"}'
+                                node_id = m.group(1)
+                                open_bracket = m.group(2)
+                                agent_name = m.group(3)
+                                task_content = m.group(4)
+                                close_bracket = m.group(5)
+                                return f'{node_id}{open_bracket}{node_id} {agent_name} {task_content}{close_bracket}'
+                            
                             txt = pattern.sub(repl, txt)
-                            txt = re.sub(r'\[([^[\]]*)\(([^)]*)\)([^[\]]*)\]', r'[\1\2\3]', txt)
-                            txt = re.sub(r'["\'“”‘’:：]', '', txt)
+                            txt = re.sub(r'["\'""'':：()（）]', '', txt)
 
                             return txt
                         

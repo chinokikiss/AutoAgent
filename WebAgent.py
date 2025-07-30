@@ -12,6 +12,11 @@ from playwright.async_api import async_playwright
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from rich.console import Console
+from rich.panel import Panel
+from rich.status import Status
+
+console = Console()
 
 tools = [
     {
@@ -123,10 +128,9 @@ SYSTEM_PROMPT = """
 - 交叉对比不同来源的内容
 - 确保信息的准确性和时效性
 
-4. **完成报告**：
+4. **任务完成**：
 - 当收集到足够全面的信息后
-- 生成结构化、详细的工作报告
-- 必须在报告末尾输出 **[任务完成]** 标记
+- 输出 [任务完成] 标记
 
 ## 搜索原则
 
@@ -175,24 +179,26 @@ class Agent:
                 model = 'Qwen/Qwen3-235B-A22B-Thinking-2507',
                 messages=self.messages,
                 stream=True,
-                tools=tools
+                tools=tools,
+                temperature=0.6,
+                top_p=0.95
             )
 
             content = ''
             reasoning = True
             assistant_message = {'role': 'assistant', 'content': ''}
+            
             for chunk in response:
                 if chunk.choices:
                     delta = chunk.choices[0].delta
                     if delta.content:
                         if reasoning:
                             reasoning = False
-                            print('\n---Answer---')
-                        print(delta.content, end='', flush=True)
+                            console.print("\n[bold blue]Agent Response:[/bold blue]")
+                        console.print(delta.content, end='')
                         content += delta.content
                     elif delta.reasoning_content:
-                        print(delta.reasoning_content, end='', flush=True)
-                        #assistant_message['content'] += delta.reasoning_content
+                        console.print(delta.reasoning_content, end='', style="dim")
 
                     if delta.tool_calls:
                         if 'tool_calls' not in assistant_message:
@@ -210,17 +216,18 @@ class Agent:
                             else:
                                 assistant_message['tool_calls'][tool_call.index]['function']['arguments'] += tool_call.function.arguments or ''
             
-            print()
+            console.print()
+            
             for message in self.messages:
                 if message['role'] == 'tool':
-                    if len(message['content']) > 10000:
-                        message['content'] = message['content'][:1000]+'...'
+                    if "get_website_elements" in message['content'][:100]:
+                        if len(message['content']) > 1000:
+                            message['content'] = message['content'][:1000]+'...'
 
             self.messages.append(assistant_message)
 
             if assistant_message.get('tool_calls'):
                 for tool_call in assistant_message['tool_calls']:
-                    print(tool_call)
                     try:
                         function_name = tool_call['function']['name']
                         
@@ -229,34 +236,37 @@ class Agent:
                         else:
                             args = {}
                         
-                        if function_name == "search_web":
-                            result = get_search(**args)
-                        elif function_name == "get_webpage_text":
-                            result = get_webpage_content(task_content, args['urls'])
-                        elif function_name == "get_website_elements":
-                            async def extract_content():
-                                async with WebContentExtractor() as extractor:
-                                    return await extractor.extract_page_content(args['url'])
-                            
-                            result = asyncio.run(extract_content())
-                        elif function_name == "download_media":
-                            result = download_media(**args)
-                        else:
-                            raise "错误的函数名"
+                        console.print(f"\n[bold magenta]Executing Tool: {function_name}[/bold magenta]")
                         
-                        print(result)
+                        with Status(f"[bold green]Running {function_name}...", console=console):
+                            if function_name == "search_web":
+                                result = get_search(**args)
+                            elif function_name == "get_webpage_text":
+                                result = get_webpage_content(args['urls'])
+                            elif function_name == "get_website_elements":
+                                async def extract_content():
+                                    async with WebContentExtractor() as extractor:
+                                        return await extractor.extract_page_content(args['url'])
+                                
+                                result = asyncio.run(extract_content())
+                            elif function_name == "download_media":
+                                result = download_media(**args)
+                            else:
+                                raise Exception("错误的函数名")
 
-                        print(f"执行工具: {function_name} - 成功")
+                        console.print(f"\n[bold cyan]{function_name.upper()} Output:[/bold cyan]")
+                        console.print(Panel(str(result)[:2000] + "..." if len(str(result)) > 2000 else str(result), border_style="cyan"))
 
                         self.messages.append({
                             'role': 'tool',
-                            'content': f"执行成功: {function_name} - {str(result)}",
+                            'content': f"执行成功: {function_name} - {str(result)[:30000]}",
                             'tool_call_id': tool_call['id']
                         })
                         
                     except Exception as e:
                         error_message = f"执行失败: {str(e)}"
-                        print(f"执行工具: {function_name} - 失败: {str(e)}")
+                        console.print(f"\n[bold red]{function_name.upper()} Error:[/bold red]")
+                        console.print(Panel(error_message, border_style="red"))
 
                         self.messages.append({
                             'role': 'tool',
@@ -265,11 +275,36 @@ class Agent:
                         })
             
             if '[任务完成]' in content:
+                console.print("\n[bold green]Task Completed[/bold green]")
                 break
             
             if not assistant_message.get('tool_calls'):
-                user_input = input('\n回复:')
+                user_input = console.input('\n[bold yellow]Reply:[/bold yellow] ')
                 self.messages.append({'role':'user', 'content':user_input})
+
+        self.messages.append({'role':'user', 'content':'根据你的任务，并考虑下一个节点的任务，详细地给出信息传递到下一个节点'})
+
+        response = Config.client.chat.completions.create(
+            model = 'Qwen/Qwen3-235B-A22B-Thinking-2507',
+            messages=self.messages,
+            stream=True,
+            temperature=0.6,
+            top_p=0.95
+        )
+
+        content = ''
+        reasoning = True
+        for chunk in response:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    if reasoning:
+                        reasoning = False
+                        console.print('\n[bold blue]---Work Report---[/bold blue]')
+                    console.print(delta.content, end='')
+                    content += delta.content
+                elif delta.reasoning_content:
+                    console.print(delta.reasoning_content, end='', style="dim")
 
         try:
             response = requests.post(f'http://127.0.0.1:{Config.port}/return', json={"function_name":"Web_Agent", "function_id":agent_id, "result":content})
@@ -322,7 +357,7 @@ class WebContentExtractor:
         extracted_data = {
             'url': base_url,
             'title': self._extract_title(soup),
-            'content': self._extract_main_content(soup),
+            'content': self._extract_main_content(soup)[:10000],
             'meta_info': self._extract_meta_info(soup),
             'navigation': self._extract_navigation(soup),
             'links': self._extract_links(soup, base_url),
@@ -538,6 +573,7 @@ def download_with_browser(page, url, output_path, filename):
         return False
 
 def download_media(urls, output_dir='./downloads'):
+    output_dir = os.path.join(Config.WORKDIR, output_dir)
     os.makedirs(output_dir, exist_ok=True)
     results = []
     
@@ -553,13 +589,13 @@ def download_media(urls, output_dir='./downloads'):
                 output_path = os.path.join(output_dir, filename)
                 
                 if download_with_requests(url, output_path):
-                    results.append(f'成功下载(requests): {filename}')
+                    results.append(f'成功下载，已保存到 {output_path}')
                 else:
                     if download_with_browser(page, url, output_path, filename):
                         if is_html_content(output_path):
                             results.append(f'警告: {url} 下载的是HTML文件，可能不是预期的媒体文件')
                         else:
-                            results.append(f'成功下载(浏览器): {filename}')
+                            results.append(f'成功下载，已保存到 {output_path}')
                     else:
                         results.append(f'下载 {url} 时出现错误: requests和浏览器都失败')
                 
@@ -585,15 +621,12 @@ def get_search(query, search_type='网页'):
     
     return search_results
 
-def get_webpage_content(task_content, urls):
-    # proxy_strings = get_proxies('http', len(urls))
-    # proxies_pool = [{'http': f'http://{p}'} for p in proxy_strings]
-    
+def get_webpage_content(urls):
     results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for x,url in enumerate(urls):
-            futures.append(executor.submit(get_url_content, url)) # futures.append(executor.submit(get_url_content, url, proxies_pool[x]))
+            futures.append(executor.submit(get_url_content, url))
         
         for future in as_completed(futures):
             results.append(future.result())
@@ -618,21 +651,8 @@ def get_webpage_content(task_content, urls):
             if len(content) > lenth:
                 content = content[:lenth]+'...'
             text += f"[webpage {i} begin]{content}[webpage {i} end]\n"
-        
-        response = Config.client.chat.completions.create(
-            model = 'Qwen/Qwen3-235B-A22B-Instruct-2507',
-            messages=[{'role':'user', 'content':text+f'\n\n请根据任务内容: "{task_content}"，识别并提取与任务直接相关的所有文本段落，要包含支持性的背景信息和上下文，在每段摘录后标注完整的网页URL'}],
-            stream=True,
-        )
 
-        content = ''
-        for chunk in response:
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    print(delta.content, end='', flush=True)
-                    content += delta.content
-        return content
+        return text
     else:
         return None
 
@@ -716,11 +736,14 @@ if sys.argv:
     with open(sys.argv[1], 'r', encoding='utf-8') as f:
         data = json.load(f)
     task_content = data["task_content"]
+    Config.WORKDIR = data["WORKDIR"]
     agent_id = data["agent_id"]
     os.unlink(sys.argv[1])
 
-    print('---Agent任务---')
-    print(task_content)
-    print('-'*15)
+    console.print(f"[bold blue]WebAgent Starting[/bold blue]")
+    console.print(f"Task: {task_content}")
+    console.print(f"Working Directory: {Config.WORKDIR}")
+    console.print("-" * 50)
+    
     agent = Agent()
     agent.request(task_content)

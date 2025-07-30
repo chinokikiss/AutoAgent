@@ -146,17 +146,20 @@ class Flowchart:
                 py = 'GUIAgent.py'
             elif function_name == "Web_Agent":
                 py = 'WebAgent.py'
+                temp_data["WORKDIR"] = Config.WORKDIR
             elif function_name == "Text_Agent":
                 pass
             else:
                 raise "错误的函数名"
 
             if len(choices) > 0:
-                args["task_content"] += f"最后工作报告中从选项:'{choices}'中选择一个，输出格式为: [选项]"
+                args["task_content"] += f"**最后工作报告中从选项:'{choices}'中选择一个，输出格式为: [选项]**"
 
             if function_name == "Text_Agent":
                 response = Config.client.chat.completions.create(
                     model='Qwen/Qwen3-235B-A22B-Instruct-2507',
+                    temperature=0.7,
+                    top_p=0.8,
                     messages=[{'role':'user', 'content':f'输入文本是:\n"""\n{result}\n"""\n请根据输入文本完成以下任务:"{args["task_content"]}"'}]
                 )
 
@@ -181,40 +184,61 @@ class Flowchart:
         nodes = {}
         connections = []
         lines = text.strip().split('\n')
-        
+
+        node_id_pattern = r'[A-Za-z0-9_]+'
+
+        node_definition_regex = re.compile(
+            rf'({node_id_pattern})'
+            r'(?:'
+            r'\[([^\]]+)\]|'
+            r'\{([^}]+(?:\}|$))|'
+            r'\(([^\)]+)\)'
+            r')'
+        )
+
         for line in lines:
             line = line.strip()
-            
             if line.startswith('flowchart') or not line:
                 continue
             
-            square_nodes = re.findall(r'([A-Z]+)\[([^]]+)]', line)
-            for node_id, node_label in square_nodes:
-                nodes[node_id] = node_label
-            
-            curly_nodes = re.findall(r'([A-Z]+)\{(.+)\}', line)
-            for node_id, node_label in curly_nodes:
-                nodes[node_id] = node_label
-            
-            if '-->' in line:
-                labeled_match = re.search(r'([A-Z]+)\s*-->\|([^|]+)\|\s*([A-Z]+)', line)
-                if labeled_match:
-                    from_node = labeled_match.group(1)
-                    label = labeled_match.group(2)
-                    to_node = labeled_match.group(3)
-                    connections.append([from_node, label, to_node])
-                else:
-                    parts = line.split('-->')
-                    if len(parts) == 2:
-                        left_side = parts[0].strip()
-                        right_side = parts[1].strip()
+            for match in node_definition_regex.finditer(line):
+                node_id = match.group(1)
+                label = next(g for g in match.groups()[1:] if g is not None)
+                if label and label.startswith('"') and not label.endswith('}'):
+                    brace_pattern = rf'{re.escape(node_id)}\{{([^}}]+\}})'
+                    brace_match = re.search(brace_pattern, line)
+                    if brace_match:
+                        label = brace_match.group(1)
+                nodes[node_id] = label
 
-                        source_ids = re.findall(r'([A-Z]+)(?:\[[^\]]*\]|\{[^}]*\})?', left_side)      
-                        dest_id_match = re.match(r'([A-Z]+)', right_side)
-                        
-                        if dest_id_match:
-                            dest_node = dest_id_match.group(1)                    
-                            for src_node in source_ids:
-                                connections.append([src_node, dest_node])
-        
+        id_from_node_str_pattern = re.compile(rf'({node_id_pattern})(?:\[[^\]]*\]|\{{[^}}]*\}}|\([^\)]*\))?')
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith('flowchart') or not line:
+                continue
+
+            labeled_match = re.search(rf'({node_id_pattern})\s*-->\|([^|]+)\|\s*({node_id_pattern})', line)
+            if labeled_match:
+                from_node = labeled_match.group(1)
+                label = labeled_match.group(2)
+                to_node = labeled_match.group(3)
+                connections.append([from_node, label, to_node])
+                continue
+
+            unlabeled_match = re.search(r'(.+?)\s*-->\s*(.+)', line)
+            if unlabeled_match:
+                left_side_raw = unlabeled_match.group(1).strip()
+                right_side_raw = unlabeled_match.group(2).strip()
+
+                source_ids_matches = id_from_node_str_pattern.findall(left_side_raw)
+                source_ids = [s for s in source_ids_matches] 
+
+                dest_id_match = id_from_node_str_pattern.match(right_side_raw)
+                
+                if dest_id_match:
+                    dest_node = dest_id_match.group(1)
+                    for src_node in source_ids:
+                        connections.append([src_node, dest_node])
+
         return nodes, connections

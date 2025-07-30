@@ -6,8 +6,13 @@ import requests
 import platform
 import subprocess
 from init import Config, config
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.status import Status
 
 sys.stdout.reconfigure(encoding='utf-8')
+console = Console()
 
 SYSTEM_PROMPT = """
 你是一个智能命令行Agent，叫CLIAgent，专门通过执行代码和多轮对话来帮助用户完成各种编程和系统任务。
@@ -71,8 +76,8 @@ SYSTEM_PROMPT = """
    - 每输出一段代码等待系统执行结果再继续
    - 根据执行反馈动态调整方案并输出新的独立代码块
 
-3. **报告阶段**
-   - **当任务已完成时，要进行工作报告，报告内容要包含代码执行结果，然后添加[任务完成]标记**
+3. **任务完成阶段**
+   - **当任务已完成时，要输出 [任务完成] 标记**
 
 ## 重要约束
 - **代码独立性**：每个代码块必须完全独立，重新定义所需变量和导入模块
@@ -103,41 +108,72 @@ class Agent:
             self.messages[0] = {'role':'system', 'content':SYSTEM_PROMPT.replace('{WORKDIR}', Config.WORKDIR)}
 
             response = Config.client.chat.completions.create(
-                model = 'Qwen/Qwen3-235B-A22B-Instruct-2507',
+                model = 'Qwen/Qwen3-Coder-480B-A35B-Instruct',
                 messages=self.messages,
-                stream=True
+                stream=True,
+                temperature=0.7,
+                top_p=0.8
             )
 
             answer = ''
             reasoning = True
+            
             for chunk in response:
                 if chunk.choices:
                     delta = chunk.choices[0].delta
                     if delta.content:
                         if reasoning:
                             reasoning = False
-                            print('\n---Answer---')
-                        print(delta.content, end='', flush=True)
+                            console.print("\n[bold blue]Agent Response:[/bold blue]")
+                        console.print(delta.content, end='')
                         answer += delta.content
                     elif delta.reasoning_content:
-                        print(delta.reasoning_content, end='', flush=True)
+                        console.print(delta.reasoning_content, end='', style="dim")
             
+            console.print()
             code_result = self.run_code(answer)
 
             if '[任务完成]' in answer:
+                console.print("\n[bold green]Task Completed[/bold green]")
                 break
 
             self.messages.append({'role':'assistant', 'content':answer})
             if code_result:
                 for key, value in code_result.items():
                     if 'print' in value and value['print']:
-                        print(f'\n{key} 打印结果:\n', value['print'])
+                        console.print(f"\n[bold cyan]{key.upper()} Output:[/bold cyan]")
+                        console.print(Panel(value['print'].strip(), border_style="cyan"))
                     if 'error' in value and value['error']:
-                        print(f'\n{key} 报错结果:\n', value['error'])
+                        console.print(f"\n[bold red]{key.upper()} Error:[/bold red]")
+                        console.print(Panel(value['error'].strip(), border_style="red"))
                 self.messages.append({'role':'user', 'content':str(code_result)})
             else:
-                user_input = input('\n回复:')
+                user_input = console.input("\n[bold yellow]Reply:[/bold yellow] ")
                 self.messages.append({'role':'user', 'content':user_input})
+        
+        self.messages.append({'role':'user', 'content':'根据你的任务，并考虑下一个节点的任务，详细地给出信息传递到下一个节点'})
+
+        response = Config.client.chat.completions.create(
+            model = 'Qwen/Qwen3-235B-A22B-Thinking-2507',
+            messages=self.messages,
+            stream=True,
+            temperature=0.6,
+            top_p=0.95
+        )
+
+        answer = ''
+        reasoning = True
+        for chunk in response:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    if reasoning:
+                        reasoning = False
+                        console.print('\n[bold blue]---Work Report---[/bold blue]')
+                    console.print(delta.content, end='')
+                    answer += delta.content
+                elif delta.reasoning_content:
+                    console.print(delta.reasoning_content, end='', style="dim")
         
         try:
             response = requests.post(f'http://127.0.0.1:{Config.port}/return', json={"function_name":"CLI_Agent", "function_id":agent_id, "result":answer})
@@ -171,6 +207,9 @@ class Agent:
         
         result_dict = {}
         if 'python' in code_dict:
+            console.print(f"\n[bold magenta]Executing Python Code:[/bold magenta]")
+            console.print(Syntax(code_dict['python'], "python", theme="monokai", word_wrap=True))
+            
             with open('extra_tool.py', 'r', encoding='utf-8') as f:
                 extra_tool_py = f.read()
             extra_tool_py = extra_tool_py.replace('Config.client', 'client')
@@ -178,16 +217,18 @@ class Agent:
             extra_tool_py = extra_tool_py.replace('from init import Config', f'from openai import OpenAI\nclient = OpenAI(api_key="{api_key}", base_url="{base_url}")')
 
             code_dict['python'] = extra_tool_py+'\n'+code_dict['python']
-            process = subprocess.Popen(
-                [sys.executable, "-c", code_dict['python']],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=Config.WORKDIR
-            )
             
-            stdout, errors = process.communicate()
-            result_dict['python'] = {'print':stdout, 'error':errors}
+            with Status("[bold green]Executing...", console=console):
+                process = subprocess.Popen(
+                    [sys.executable, "-c", code_dict['python']],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=Config.WORKDIR
+                )
+                
+                stdout, errors = process.communicate()
+                result_dict['python'] = {'print':stdout, 'error':errors}
         
         return result_dict
 
@@ -200,8 +241,11 @@ if sys.argv:
     agent_id = data["agent_id"]
     os.unlink(sys.argv[1])
 
-    print('---Agent任务---')
-    print(task_content)
-    print('-'*15)
+    console.print(f"[bold blue]CLIAgent Starting[/bold blue]")
+    console.print(f"Task: {task_content}")
+    console.print(f"Working Directory: {Config.WORKDIR}")
+    console.print(f"System: {system_info} | Python: {python_version}")
+    console.print("-" * 50)
+    
     agent = Agent()
     agent.request(task_content)
