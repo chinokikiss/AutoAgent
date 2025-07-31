@@ -318,9 +318,9 @@ class Agent:
     def identify(self):
         screen_result = capture_screen()
         if len(self.messages) > 2:
-            text = f"任务:'{self.task_content}'，上下文:'{self.messages[-2:]}'，"+'先根据图像分析你是否成功完成上一个操作，最后检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象'
+            text = f"你是一个辅助性AI，负责帮助GUIAgent识别屏幕的GUI位置。GUIAgent的任务:'{self.task_content}'，GUIAgent的上下文:'{self.messages[-2:]}'，"+'检测图像中对GUIAgent有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，不用思考决策，不要不返回对象'
         else:
-            text = f"任务:'{self.task_content}'，"+'检测图像中所有可能对任务有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，也不要思考决策，至少返回一个对象'
+            text = f"你是一个辅助性AI，负责帮助GUIAgent识别屏幕的GUI位置。GUIAgent的任务:'{self.task_content}'，"+'检测图像中对GUIAgent有帮助的对象并返回它们的坐标位置。输出格式应为：{"bbox_2d": [x1, y1, x2, y2], "label": 该对象的详细名称}。注意不要返回虚假坐标和虚假对象，不用思考决策，不要不返回对象'
         messages2 = [{
             'role': 'user',
             'content': [
@@ -330,15 +330,13 @@ class Agent:
                 },
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{screen_result['image']}"},
-                    "resized_height": 1600,
-                    "resized_width": 2560,
+                    "image_url": {"url": f"data:image/png;base64,{screen_result['image']}"}
                 }
             ]
         }]
 
         response = Config.client.chat.completions.create(
-            model='Qwen/Qwen2.5-VL-72B-Instruct',
+            model='Qwen/Qwen2.5-VL-32B-Instruct',
             messages=messages2,
             stream=True
         )
@@ -423,7 +421,7 @@ class Agent:
                             keys = args.pop('keys', [])
                             result = globals()[function_name](*keys, **args)
                         elif function_name == 'VLM':
-                            result = VLM(args, [capture_screen()['image']])
+                            result = VLM(args['text'], [capture_screen()['image']], False)
                         else:
                             result = globals()[function_name](**args)
                         
@@ -478,7 +476,7 @@ class Agent:
                     console.print(delta.reasoning_content, end='', style="dim")
 
         try:
-            response = requests.post(f'https://127.0.0.1:{Config.port}/return', json={"function_name":"GUI_Agent", "function_id":agent_id, "result":content})
+            response = requests.post(f'http://127.0.0.1:{Config.port}/return', json={"function_name":"GUI_Agent", "function_id":agent_id, "result":content})
             if response.status_code != 200:
                 raise response.content
         except:
